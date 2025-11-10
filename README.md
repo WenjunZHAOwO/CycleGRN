@@ -6,3 +6,12 @@ a method inferring GRN from cyclic dynamics by invariant measure
 
 An example can be found at https://github.com/WenjunZHAOwO/CycleGRN/blob/main/Test_HARISSA.ipynb
 
+This work is built based on the following two github repos, thanks to the authors:
+
+# Data simulator
+
+HARISSA: https://github.com/ulysseherbach/harissa
+
+# Invariant flow
+
+https://github.com/jrbotvinick/Learning-Dynamics-on-Invariant-Measures
