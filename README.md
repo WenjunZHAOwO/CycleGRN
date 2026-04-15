@@ -1,8 +1,10 @@
 # Repo for Cycle GRN
 
-a method inferring GRN from cyclic dynamics by invariant measure
+A method inferring GRN from cyclic dynamics by invariant measure
 
 ![alt text](https://github.com/WenjunZHAOwO/CycleGRN/blob/main/Concise_Flowchart.png "Pipeline")
+
+The code accompanies RECOMB 2026 paper: https://www.biorxiv.org/content/10.1101/2025.11.12.688126v2.full.pdf
 
 An example can be found at https://github.com/WenjunZHAOwO/CycleGRN/blob/main/Test_HARISSA.ipynb
 
