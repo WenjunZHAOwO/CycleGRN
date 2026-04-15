@@ -19,3 +19,11 @@ https://github.com/jrbotvinick/Learning-Dynamics-on-Invariant-Measures
 ## Mouse retinal progenitor cells
 
 Real mouse data was retrieved from GSE118614: https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE118614
+
+## scEU cell cycle data
+
+Human cell cycle data was retrieved from GSE128365: https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE128365
+
+## Mouse midbrain RGC data
+
+MOSTA database: https://db.cngb.org/stomics/mosta/download/
