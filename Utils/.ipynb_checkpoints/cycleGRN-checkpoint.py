@@ -1,7 +1,7 @@
 import numpy as np
 
 import sys
-sys.path.append('../Comparison/')
+sys.path.append('../../Comparison/')
 import numpy as np
 import matplotlib.pyplot as plt
 from NN_Ours import traj_ours
@@ -14,6 +14,112 @@ from sklearn.neighbors import NearestNeighbors
 from sklearn.linear_model import ElasticNet, Ridge, ElasticNetCV, MultiTaskElasticNetCV
 from scipy.sparse.linalg import splu
 
+import numpy as np
+import scipy.sparse as sp
+from sklearn.neighbors import NearestNeighbors
+import matplotlib.pyplot as plt
+
+# ---------- Core helpers ----------
+def row_normalize(W):
+    """Row-normalize adjacency/kernel to a random-walk matrix P."""
+    if sp.issparse(W):
+        rs = np.asarray(W.sum(axis=1)).ravel() + 1e-12
+        return sp.diags(1.0/rs) @ W
+    rs = W.sum(axis=1, keepdims=True) + 1e-12
+    return W / rs
+
+def flow_from_transition(X2d, P):
+    """
+    X2d: (n,2) embedding
+    P  : (n,n) row-stochastic transition (sparse or dense)
+    Returns per-cell flow vectors v = (P @ X - X).
+    """
+    if sp.issparse(P):
+        PX = P @ X2d
+    else:
+        PX = P.dot(X2d)
+    V = PX - X2d
+    return V
+
+def interpolate_to_grid(X2d, V, grid_size=60, k=30, bandwidth=None):
+    """
+    Interpolate per-cell vectors V onto a regular grid over X2d.
+    Gaussian-weighted kNN interpolation (bandwidth auto = median NN distance).
+    Returns (Xg, Yg, U, V) for streamplot/quiver.
+    """
+    x, y = X2d[:,0], X2d[:,1]
+    xlin = np.linspace(x.min(), x.max(), grid_size)
+    ylin = np.linspace(y.min(), y.max(), grid_size)
+    Xg, Yg = np.meshgrid(xlin, ylin)
+    grid_pts = np.c_[Xg.ravel(), Yg.ravel()]
+
+    nbrs = NearestNeighbors(n_neighbors=min(k, len(X2d)), algorithm='auto').fit(X2d)
+    dists, idxs = nbrs.kneighbors(grid_pts, return_distance=True)  # (m,k)
+    if bandwidth is None:
+        # median of 1-NN distances across grid points
+        bandwidth = np.median(dists[:, 0]) + 1e-12
+
+    W = np.exp(- (dists**2) / (2 * bandwidth**2))  # Gaussian weights
+    W /= (W.sum(axis=1, keepdims=True) + 1e-12)
+
+    U = (W * V[idxs, 0]).sum(axis=1).reshape(Xg.shape)
+    Vv = (W * V[idxs, 1]).sum(axis=1).reshape(Xg.shape)
+    return Xg, Yg, U, Vv
+
+# ---------- Visualization ----------
+def velocity_streamplot(X2d, V, use_P=True, grid_size=60, k=30, bandwidth=None,
+                        density=1.2, minlength=0.5, color_by_speed=True,
+                        quiver=False, speed_thresh=1e-6):
+    
+    Xg, Yg, U, Vg = interpolate_to_grid(
+        X2d, V, grid_size=grid_size, k=k, bandwidth=bandwidth
+    )
+
+    speed = np.hypot(U, Vg)
+
+    # background cells
+    plt.scatter(X2d[:,0], X2d[:,1], s=10, c="lightgray",
+                alpha=0.7, linewidths=0)
+
+    if quiver:
+        step = max(1, grid_size // 25)
+
+        # subsample grid
+        Xs = Xg[::step, ::step]
+        Ys = Yg[::step, ::step]
+        Us = U[::step, ::step]
+        Vs = Vg[::step, ::step]
+        Ss = speed[::step, ::step]
+
+        # mask: only plot where velocity exists
+        mask = Ss > speed_thresh
+
+        Q = plt.quiver(
+            Xs[mask], Ys[mask],
+            Us[mask], Vs[mask],
+            Ss[mask] if color_by_speed else None,
+            angles='xy',
+            scale_units='xy',
+            scale=1.0,
+            width=0.003
+        )
+
+        if color_by_speed:
+            plt.colorbar(Q, label="speed")
+
+    else:
+        strm = plt.streamplot(
+            Xg, Yg, U, Vg,
+            density=density,
+            minlength=minlength,
+            color=speed if color_by_speed else 'k',
+            linewidth=2
+        )
+        if color_by_speed:
+            cbar = plt.colorbar(strm.lines)
+            cbar.set_label("speed")
+
+            
 def bin_traj(ys):
     Peq,edges = np.histogramdd(ys , range = [[-4,4],[-4,4]], bins = [20,20],density=True)
     # costM /= costM.max()
