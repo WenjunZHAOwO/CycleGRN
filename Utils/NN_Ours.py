@@ -1,6 +1,6 @@
+from tqdm.notebook import tqdm  # Use 'from tqdm import tqdm' if running in a script/terminal
 
-
-def traj_ours(TIME,name,seed,plot=False):#input the desired wall clock training time and the name of the trajectory file to learn
+def traj_ours(TIME,name,seed,lr=1e-3,plot=False):#input the desired wall clock training time and the name of the trajectory file to learn
     
     
     ###########################################################
@@ -55,7 +55,7 @@ def traj_ours(TIME,name,seed,plot=False):#input the desired wall clock training 
     'Cost': 'KL',#cost function, can be L2,W2,KL
     'nodes': 100, #number of nodes in NN
     'act': 'tanh', #NN activation
-    'lr': 1e-3, #learning rate
+    'lr': lr, #learning rate
     'TSMax': 1e6, #number of steps for plotting dynamics
     'filtering': 2, #standard deviation of gaussian kernel for filtering
     'numiter': TIME,#00000, #total number of iterations
@@ -187,7 +187,7 @@ def traj_ours(TIME,name,seed,plot=False):#input the desired wall clock training 
         
     
         # return the transpose of matrix (1-G["alpha"])*M - speyeN for adjoint eqn.
-        return (1-G["alpha"])*M.transpose() - speyeN, Peq0, x, K_mat
+        return (1-G["alpha"])*M.transpose() - speyeN, Peq0, x, K_mat, M
     
     
     def safe_divide(n, d):    
@@ -229,7 +229,7 @@ def traj_ours(TIME,name,seed,plot=False):#input the desired wall clock training 
     #####Calculate Gradient
     def calc_cost_gradient(G,bounds,Peq_true):
         #### 1. Solve the forward problem
-        A,Peq,_,K_mat = FWD(G,bounds)
+        A,Peq,_,K_mat,_ = FWD(G,bounds)
         #### 2. compute the loss function
     
         if G['Cost'] == 'KL':
@@ -361,7 +361,26 @@ def traj_ours(TIME,name,seed,plot=False):#input the desired wall clock training 
         def forward(self, y):
             return self.net(y.T)
     
-     
+    class EarlyStopper:
+        def __init__(self, patience=50, min_delta=1e-5):
+            """
+            patience: How many iterations to wait after the last improvement.
+            min_delta: Minimum change in loss to qualify as an improvement.
+            """
+            self.patience = patience
+            self.min_delta = min_delta
+            self.counter = 0
+            self.best_loss = np.inf
+            self.early_stop = False
+    
+        def __call__(self, val_loss):
+            if val_loss < (self.best_loss - self.min_delta):
+                self.best_loss = val_loss
+                self.counter = 0  # Reset counter if we improved
+            else:
+                self.counter += 1
+                if self.counter >= self.patience:
+                    self.early_stop = True
     
         
     class PDEsolver(torch.autograd.Function):
@@ -406,7 +425,7 @@ def traj_ours(TIME,name,seed,plot=False):#input the desired wall clock training 
         Peq = Peq/sum(Peq.flatten())
         return Peq
     
-    _,Peq_initial,_,_ = FWD(G,bounds)
+    _,Peq_initial,_,_,_ = FWD(G,bounds)
     
     solver = PDEsolver.apply
     
@@ -418,56 +437,113 @@ def traj_ours(TIME,name,seed,plot=False):#input the desired wall clock training 
     total_history = []
     
     
+    # opt = torch.optim.Adam(net.parameters(), lr=G['lr'])
+    # start = time()
+    # for k in range(steps):
+    #     net.train()
+            
+    #     def closure1():
+    #         opt.zero_grad() 
+    #         y_pred = torch.zeros((nx-1)*(ny-1),2)
+    #         y_pred[:,0] = net(XX)[:,0]
+    #         y_pred[:,1] = net(YY)[:,1]
+    #         loss = solver(y_pred)
+    #         loss.backward()
+    #         return loss
+    
+    #     loss = opt.step(closure1)
+       
+        
+    
+    #     #Update velocities by NN
+            
+    #     Vi = net(XX).detach().numpy()
+    #     Vj = net(YY).detach().numpy()
+        
+    #     G['Vx'][1:-1,1:-1] = Vi[:,0].reshape((nx-1,ny-1))
+    #     G['Vy'][1:-1,1:-1] = Vj[:,1].reshape((nx-1,ny-1))
+    #     # G['Vx'], G['Vy'] = np.zeros((nx+1,ny+1)),np.zeros((nx+1,ny+1))
+    
+    
+        
+    
+    
+    #     # print('Cost: ', loss.detach().numpy())
+    #     costs.append(loss.detach().numpy())
+    #     iters.append(k)
+    
+                
+    #     if k%G['plotevery']  == 0 and G['plot']:
+    #         print('Iteration', k,'|', 'Cost:',loss.detach().numpy(), '|', 'Tol:', costs[-1]/costs[0])
+          
+    
+    #     if k%G['plotevery'] == 0 and k!= 0 and G['plot']:
+    #         _,Peq,_,_,M = FWD(G,bounds)
+    #         plt.imshow(Peq.reshape(nx,ny,order = 'F').T,origin = 'lower',aspect = 'auto')
+    #         plt.show()
+    #         velocities(G)
+    #         plt.show()
+    #     end = time()
+    #     if end-start > TIME:
+    #         break
+    #     k+=1
+    # Initialize optimizer
+    early_stopper = EarlyStopper(patience=100, min_delta=1e-5) 
+
     opt = torch.optim.Adam(net.parameters(), lr=G['lr'])
+    pbar = tqdm(range(steps), desc="Training CYCLO")
     start = time()
-    for k in range(steps):
+    
+    for k in pbar:
         net.train()
             
         def closure1():
             opt.zero_grad() 
-            y_pred = torch.zeros((nx-1)*(ny-1),2)
+            y_pred = torch.zeros((nx-1)*(ny-1), 2)
             y_pred[:,0] = net(XX)[:,0]
             y_pred[:,1] = net(YY)[:,1]
             loss = solver(y_pred)
             loss.backward()
             return loss
-    
-        loss = opt.step(closure1)
-       
         
+        loss = opt.step(closure1)
+        current_loss = loss.item()
+        
+        # Update progress bar
+        pbar.set_postfix({'Cost': f'{current_loss:.5f}'})
     
-        #Update velocities by NN
-            
+        # --- 3. Check Early Stopping ---
+        early_stopper(current_loss)
+        if early_stopper.early_stop:
+            print(f"Early stopping triggered at iteration {k}. Loss stabilized at {current_loss:.6f}")
+            break  # <--- Exits the loop immediately
+    
+        # Update velocities by NN
         Vi = net(XX).detach().numpy()
         Vj = net(YY).detach().numpy()
         
         G['Vx'][1:-1,1:-1] = Vi[:,0].reshape((nx-1,ny-1))
         G['Vy'][1:-1,1:-1] = Vj[:,1].reshape((nx-1,ny-1))
-        # G['Vx'], G['Vy'] = np.zeros((nx+1,ny+1)),np.zeros((nx+1,ny+1))
     
-    
-        
-    
-    
-        # print('Cost: ', loss.detach().numpy())
-        costs.append(loss.detach().numpy())
+        costs.append(current_loss)
         iters.append(k)
-    
-                
-        if k%G['plotevery']  == 0 and G['plot']:
-            print('Iteration', k,'|', 'Cost:',loss.detach().numpy(), '|', 'Tol:', costs[-1]/costs[0])
-          
-    
-        if k%G['plotevery'] == 0 and k!= 0 and G['plot']:
-            _,Peq,_,_ = FWD(G,bounds)
-            plt.imshow(Peq.reshape(nx,ny,order = 'F').T,origin = 'lower',aspect = 'auto')
+        
+        # Plotting logic
+        if k % G['plotevery'] == 0 and k != 0 and G['plot']:
+            _, Peq, _, _, M = FWD(G, bounds)
+            plt.figure(figsize=(10,4))
+            plt.subplot(1,2,1)
+            plt.imshow(Peq.reshape(nx,ny,order='F').T, origin='lower', aspect='auto')
+            plt.title(f"Iteration {k}")
             plt.show()
             velocities(G)
             plt.show()
+    
+        # Time check break
         end = time()
-        if end-start > TIME:
+        if end - start > TIME:
+            print("Time limit reached.")
             break
-        k+=1
             
 
     # end = time()
@@ -476,8 +552,116 @@ def traj_ours(TIME,name,seed,plot=False):#input the desired wall clock training 
     ysn = dynamics(G)
     if G['plot']:
         plt.scatter(ysn[:,0],ysn[:,1],c = 'r')
+    _,Peq,_,_,M = FWD(G,bounds)
     v1,v2 = velocities(G)
+    Ms = project_M_to_samples_operator(M, ys)
+    Ms = linear_operator_to_dense(Ms)
     return ysn, end-start,velocities_in_sample(G,ys)
      
-      
+import numpy as np
+import scipy.sparse as sp
+from scipy.sparse.linalg import LinearOperator
+
+def build_W_bilinear(ys, xmin=-4.0, xmax=4.0, ymin=-4.0, ymax=4.0, dx=0.1):
+    """
+    Build sparse bilinear interpolation matrix W (N x n) that maps sample-mass -> grid-mass.
+
+    If s in R^n is a distribution over samples (sum=1),
+      p_grid = W @ s  is the induced distribution over grid nodes (sum=1)
+    using bilinear weights to distribute each sample to its 4 surrounding grid nodes.
+
+    Convention:
+      Grid has nodes at xmin + i*dx, i=0..nx-1; similarly for y.
+      Flattening is Fortran: idx = i + nx*j.
+    """
+    ys = np.asarray(ys, dtype=float)
+    n = ys.shape[0]
+
+    # grid sizes (include endpoints)
+    nx = int(round((xmax - xmin) / dx)) + 1
+    ny = int(round((ymax - ymin) / dx)) + 1
+    N = nx * ny
+
+    x = ys[:, 0]
+    y = ys[:, 1]
+
+    # Clamp points to the grid interior so we can take (i0,i0+1) safely
+    # Points exactly at xmax/ymax go to the last cell (nx-2, ny-2)
+    eps = 1e-12
+    x = np.clip(x, xmin, xmax - eps)
+    y = np.clip(y, ymin, ymax - eps)
+
+    # fractional index in grid coordinates
+    fx = (x - xmin) / dx
+    fy = (y - ymin) / dx
+
+    i0 = np.floor(fx).astype(int)
+    j0 = np.floor(fy).astype(int)
+    i1 = i0 + 1
+    j1 = j0 + 1
+
+    # Safety
+    i0 = np.clip(i0, 0, nx - 2)
+    i1 = np.clip(i1, 1, nx - 1)
+    j0 = np.clip(j0, 0, ny - 2)
+    j1 = np.clip(j1, 1, ny - 1)
+
+    tx = fx - i0
+    ty = fy - j0
+
+    # Bilinear weights
+    w00 = (1 - tx) * (1 - ty)
+    w10 = tx * (1 - ty)
+    w01 = (1 - tx) * ty
+    w11 = tx * ty
+
+    # Convert (i,j) to flattened grid indices (Fortran order)
+    def idx(ii, jj):
+        return ii + nx * jj
+
+    g00 = idx(i0, j0)
+    g10 = idx(i1, j0)
+    g01 = idx(i0, j1)
+    g11 = idx(i1, j1)
+
+    # Build sparse W: each column (sample) has 4 nonzeros summing to 1
+    rows = np.concatenate([g00, g10, g01, g11])
+    cols = np.concatenate([np.arange(n), np.arange(n), np.arange(n), np.arange(n)])
+    data = np.concatenate([w00, w10, w01, w11])
+
+    W = sp.csr_matrix((data, (rows, cols)), shape=(N, n))
+    return W, (nx, ny)
+   
+def project_M_to_samples_operator(M, ys, dx=0.1, xmin=-4, xmax=4, ymin=-4, ymax=4):
+    """
+    Returns (P_op, W) where P_op acts like P = W^T M W on vectors in R^n,
+    without forming P explicitly.
+    """
+    W, _ = build_W_bilinear(ys, xmin, xmax, ymin, ymax, dx)
+    n = ys.shape[0]
+
+    def matvec(v):
+        v = np.asarray(v, dtype=float).ravel()
+        return W.T @ (M @ (W @ v))
+
+    def rmatvec(v):
+        v = np.asarray(v, dtype=float).ravel()
+        # (W^T M W)^T = W^T M^T W
+        return W.T @ (M.T @ (W @ v))
+
+    P_op = LinearOperator(shape=(n, n), matvec=matvec, rmatvec=rmatvec, dtype=float)
+    return P_op
+
+import numpy as np
+
+def linear_operator_to_dense(Ms):
+    n, m = Ms.shape
+    assert n == m, "Operator must be square"
+
+    A = np.zeros((n, n))
+    for j in range(n):
+        e = np.zeros(n)
+        e[j] = 1.0
+        A[:, j] = Ms @ e
+    return A
     

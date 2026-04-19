@@ -1,12 +1,11 @@
 import numpy as np
 
 import sys
-sys.path.append('../../Comparison/')
+
 import numpy as np
 import matplotlib.pyplot as plt
 from NN_Ours import traj_ours
-# from SINDy_func import traj_SINDy
-# from NODE_func import traj_NODE
+
 import pickle 
 import ot
 from scipy.ndimage import gaussian_filter
